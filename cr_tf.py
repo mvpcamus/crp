@@ -7,7 +7,7 @@ import tensorflow as tf
 
 from reader import Reader
 
-MAX_STEPS = 10000
+MAX_STEPS = 20000
 BATCH_SIZE = 30
 LEARNING_RATE = 0.001 # learning rate for optimizer
 KEEP_RATE = 1.0       # keep rate for dropout
@@ -22,20 +22,20 @@ def main(_):
       data_batch.append(tf.slice(batches[i],[0,1],[-1,1]))
     data_batch = tf.concat(data_batch, 1)
     label_batch = batches['label']
-
+ 
   with tf.device('/gpu:0'):
     ### define neural network form
-    w_1 = tf.get_variable('w1',[8, 100])
-    b_1 = tf.get_variable('b1',[100])
+    w_1 = tf.get_variable('w1',[8, 100], trainable=True)
+    b_1 = tf.get_variable('b1',[100], trainable=True)
 
-    w_2 = tf.get_variable('w2',[100,50])
-    b_2 = tf.get_variable('b2',[50])
+    w_2 = tf.get_variable('w2',[100,50], trainable=True)
+    b_2 = tf.get_variable('b2',[50], trainable=True)
 
-    w_3 = tf.get_variable('w3',[50,50])
-    b_3 = tf.get_variable('b3',[50])
+    w_3 = tf.get_variable('w3',[50,50], trainable=True)
+    b_3 = tf.get_variable('b3',[50], trainable=True)
 
-    w_out = tf.get_variable('wout',[50, 2])
-    b_out = tf.get_variable('bout',[2])
+    w_out = tf.get_variable('wout',[50, 2], trainable=True)
+    b_out = tf.get_variable('bout',[2], trainable=True)
 
     h_1 = tf.add(tf.matmul(data_batch, w_1), b_1)
     h_1 = tf.nn.relu(h_1)
@@ -52,8 +52,13 @@ def main(_):
     out = tf.add(tf.matmul(h_3, w_out), b_out)
 
     ### define cost function and optimizer
-    loss_op = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(labels=label_batch, logits=out))
-    opt = tf.train.AdamOptimizer(LEARNING_RATE).minimize(loss_op)
+  with tf.device('/cpu:0'):
+    global_step = tf.Variable(0, trainable=False)
+  with tf.device('/gpu:0'):
+    decayed_lr = tf.train.exponential_decay(LEARNING_RATE, global_step, int(MAX_STEPS/3), 0.95, staircase=True)
+    entropy = tf.nn.softmax_cross_entropy_with_logits(labels=label_batch, logits=out) 
+    loss_op = tf.reduce_mean(entropy)
+    opt = tf.train.AdamOptimizer(decayed_lr).minimize(loss_op, global_step=global_step)
 
   with tf.device('/cpu:0'):
     ### define test values
@@ -69,7 +74,7 @@ def main(_):
 
   ### train model
   for step in range(MAX_STEPS):
-    _, loss, data_p, acc_p = sess.run([opt, loss_op, data_batch, accuracy])
+    _, loss, data_p, acc_p, lr_p = sess.run([opt, loss_op, data_batch, accuracy])
     if (step+1) % 1000 == 0:
       print("[{:5d}/{:5d}] loss:{:.3f}, train accuracy:{:.3f}".format(step+1, MAX_STEPS, loss, acc_p))
   print("--- Training Finished ---")
