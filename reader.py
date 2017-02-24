@@ -6,7 +6,7 @@ import tensorflow as tf
 
 class Reader(object):
   def __init__(self):
-    # currency indices of input records
+    # currency index of input records
     self.index = ['USD', 'JPY', 'CNY', 'EUR', 'GBP', 'CHF', 'CAD', 'AUD']
 
   def read_and_decode(self, filename):

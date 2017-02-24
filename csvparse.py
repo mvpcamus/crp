@@ -13,22 +13,23 @@ class CSVParse(object):
     self.delimiter = ';'   # delimiter of csv source to correct
     self.dialect = 'excel' # dialiect of csv source to correct
     self.point = ','       # decimal point type in csv source to correct
-    self.index = True      # index raw in csv source to correct
+    self.index = True      # input csv source contains index row
 
   def convert(self, infile, outfile, target):
     '''
+    Convert original csv file to TFRecords file
     args:
       infile = string of input CSV filepath
       outfile = string of output tfrecords filepath
       target = target currency for label [USD, JPY, CNY, EUR, GBP, CHF, CAD, AUD]
-    operation:
-      convert original csv file to TFRecords file
     '''
     data = [] 
     with open(infile) as csvfile:
       reader = csv.reader(csvfile, delimiter='\t')
       if self.index == True:
         index = reader.next()
+      else:
+        index = ['USD', 'JPY', 'CNY', 'EUR', 'GBP', 'CHF', 'CAD', 'AUD']
       for row in reader:
         values = []
         for col in row:
@@ -55,31 +56,24 @@ class CSVParse(object):
 
     writer = tf.python_io.TFRecordWriter(outfile)
     for i in range(len(label)):
-      example = tf.train.Example(features=tf.train.Features(feature={
-        index[0]: tf.train.Feature(float_list=tf.train.FloatList(value=[data[i+1][0],diff[i][0]])),
-        index[1]: tf.train.Feature(float_list=tf.train.FloatList(value=[data[i+1][1],diff[i][1]])),
-        index[2]: tf.train.Feature(float_list=tf.train.FloatList(value=[data[i+1][2],diff[i][2]])),
-        index[3]: tf.train.Feature(float_list=tf.train.FloatList(value=[data[i+1][3],diff[i][3]])),
-        index[4]: tf.train.Feature(float_list=tf.train.FloatList(value=[data[i+1][4],diff[i][4]])),
-        index[5]: tf.train.Feature(float_list=tf.train.FloatList(value=[data[i+1][5],diff[i][5]])),
-        index[6]: tf.train.Feature(float_list=tf.train.FloatList(value=[data[i+1][6],diff[i][6]])),
-        index[7]: tf.train.Feature(float_list=tf.train.FloatList(value=[data[i+1][7],diff[i][7]])),
-        'label': tf.train.Feature(int64_list=tf.train.Int64List(value=label[i])),
-      }))
+      feature = {'label': tf.train.Feature(int64_list=tf.train.Int64List(value=label[i]))}
+      for j,key in enumerate(index):
+        feature[key] = tf.train.Feature(float_list=tf.train.FloatList(value=[data[i+1][j],diff[i][j]]))
+      example = tf.train.Example(features=tf.train.Features(feature=feature))
       writer.write(example.SerializeToString())
     writer.close()
 
     print ('Successfully created TFRecord File [{}]'.format(outfile))
     print ('Data source: [{}], Target Currency: [{}]'.format(infile, target))
+    print ('Inputs: {}'.format(index))
     return
 
   def correct(self, infile, outfile):
     '''
+    Convert excel generated csv file to original csv
     args:
       infile = string of input CSV filepath
       outfile = string of output CSV filepath
-    operation:
-      convert excel generated csv file to original csv
     '''
     data = []
     with open(infile) as csvfile:
