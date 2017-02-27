@@ -11,7 +11,7 @@ class FullConnected(object):
   '''
   Restricted Boltzmann Machine
   Args:
-    input: input tensor array = x
+    x: input tensor array
     shape: [input size, output size]
   Return:
     output nodes tensor array = w * x + b
@@ -28,6 +28,14 @@ class LSTM(object):
     pass
 
 class BNormal(object):
+  '''
+  Batch Normalization
+  Args:
+    x: input tensor array
+    shape: [input size]
+  Return:
+    batch normalized value
+  '''
   def __init__(self, x, shape, train):
     self.x = x
     self.train = train
@@ -45,22 +53,6 @@ class BNormal(object):
                         lambda: (ema.average(batch_mean), ema.average(batch_var)))
     return tf.nn.batch_normalization(self.x, mean, var, self.beta, self.gamma, 1e-3)
  
-def batch_normalize(x, shape, train_phase):
-  with tf.variable_scope('bn'):
-    beta = tf.Variable(tf.constant(0.0, shape=[shape]), name='beta', trainable=True)
-    gamma = tf.Variable(tf.constant(1.0, shape=[shape]), name='gamma', trainable=True)
-    batch_mean, batch_var = tf.nn.moments(x, [0], name='moments')
-    ema = tf.train.ExponentialMovingAverage(decay=0.5)
-
-    def mean_var_with_update():
-      ema_apply_op = ema.apply([batch_mean, batch_var])
-      with tf.control_dependencies([ema_apply_op]):
-        return tf.identity(batch_mean), tf.identity(batch_var)
-
-    mean, var = tf.cond(train_phase, mean_var_with_update,
-                        lambda: (ema.average(batch_mean), ema.average(batch_var)))
-  return tf.nn.batch_normalization(x, mean, var, beta, gamma, 1e-3)
-
 def main(_):
   MAX_STEPS = 20000
   BATCH_SIZE = 30
@@ -89,13 +81,13 @@ def main(_):
     with tf.variable_scope('hidden2'):
       h2 = FullConnected(h1_out, [100, 50]).output()
       h2_br = BNormal(h2, [50], train_phase).output()
-      h2_relu = tf.nn.relu(h2)
+      h2_relu = tf.nn.relu(h2_br)
       h2_out = tf.nn.dropout(h2_relu, KEEP_RATE)
 
     with tf.variable_scope('hidden3'):
       h3 = FullConnected(h2_out, [50, 50]).output()
-      b3_br = BNormal(h3, [50], train_phase).output()
-      h3_relu = tf.nn.relu(h3)
+      h3_br = BNormal(h3, [50], train_phase).output()
+      h3_relu = tf.nn.relu(h3_br)
       h3_out = tf.nn.dropout(h3_relu, KEEP_RATE)
 
     with tf.variable_scope('output'):
