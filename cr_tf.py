@@ -7,12 +7,67 @@ import tensorflow as tf
 
 from reader import Reader
 
-MAX_STEPS = 20000
-BATCH_SIZE = 30
-LEARNING_RATE = 0.001 # learning rate for optimizer
-KEEP_RATE = 1.0       # keep rate for dropout
+class FullConnected(object):
+  '''
+  Restricted Boltzmann Machine
+  Args:
+    input: input tensor array = x
+    shape: [input size, output size]
+  Return:
+    output nodes tensor array = w * x + b
+  '''
+  def __init__(self, x, shape):
+    self.x = x
+    self.w = tf.get_variable('w', shape, trainable=True)
+    self.b = tf.get_variable('b', shape[1], trainable=True)
+  def output(self):
+    return tf.add(tf.matmul(self.x, self.w), self.b)
+
+class LSTM(object):
+  def __init__(self,input, shape):
+    pass
+
+class BNormal(object):
+  def __init__(self, x, shape, train):
+    self.x = x
+    self.train = train
+    self.beta = tf.Variable(tf.constant(0.0, shape=shape), name='beta', trainable=True)
+    self.gamma = tf.Variable(tf.constant(1.0, shape=shape), name='gamma', trainable=True)
+  def output(self):
+    batch_mean, batch_var = tf.nn.moments(self.x, [0], name='moments')
+    ema = tf.train.ExponentialMovingAverage(decay=0.5)
+    def mean_var_with_update():
+      ema_apply_op = ema.apply([batch_mean, batch_var])
+      with tf.control_dependencies([ema_apply_op]):
+        return tf.identity(batch_mean), tf.identity(batch_var)
+    mean, var = tf.cond(self.train,
+                        mean_var_with_update,
+                        lambda: (ema.average(batch_mean), ema.average(batch_var)))
+    return tf.nn.batch_normalization(self.x, mean, var, self.beta, self.gamma, 1e-3)
+ 
+def batch_normalize(x, shape, train_phase):
+  with tf.variable_scope('bn'):
+    beta = tf.Variable(tf.constant(0.0, shape=[shape]), name='beta', trainable=True)
+    gamma = tf.Variable(tf.constant(1.0, shape=[shape]), name='gamma', trainable=True)
+    batch_mean, batch_var = tf.nn.moments(x, [0], name='moments')
+    ema = tf.train.ExponentialMovingAverage(decay=0.5)
+
+    def mean_var_with_update():
+      ema_apply_op = ema.apply([batch_mean, batch_var])
+      with tf.control_dependencies([ema_apply_op]):
+        return tf.identity(batch_mean), tf.identity(batch_var)
+
+    mean, var = tf.cond(train_phase, mean_var_with_update,
+                        lambda: (ema.average(batch_mean), ema.average(batch_var)))
+  return tf.nn.batch_normalization(x, mean, var, beta, gamma, 1e-3)
 
 def main(_):
+  MAX_STEPS = 20000
+  BATCH_SIZE = 30
+  LEARNING_RATE = 0.005 # learning rate for optimizer
+  KEEP_RATE = 1.0       # keep rate for dropout
+  
+  train_phase = tf.placeholder(tf.bool, name='phase_train')
   with tf.device('/cpu:0'):
     ### load data from TFRecords file
     index, tfrecords = Reader().index, Reader().read_and_decode('input.tfrecords')
@@ -25,31 +80,26 @@ def main(_):
  
   with tf.device('/gpu:0'):
     ### define neural network form
-    w_1 = tf.get_variable('w1',[8, 100], trainable=True)
-    b_1 = tf.get_variable('b1',[100], trainable=True)
+    with tf.variable_scope('hidden1'):
+      h1 = FullConnected(data_batch, [8, 100]).output()
+      h1_br = BNormal(h1, [100], train_phase).output()
+      h1_relu = tf.nn.relu(h1_br)
+      h1_out = tf.nn.dropout(h1_relu, KEEP_RATE)
 
-    w_2 = tf.get_variable('w2',[100,50], trainable=True)
-    b_2 = tf.get_variable('b2',[50], trainable=True)
+    with tf.variable_scope('hidden2'):
+      h2 = FullConnected(h1_out, [100, 50]).output()
+      h2_br = BNormal(h2, [50], train_phase).output()
+      h2_relu = tf.nn.relu(h2)
+      h2_out = tf.nn.dropout(h2_relu, KEEP_RATE)
 
-    w_3 = tf.get_variable('w3',[50,50], trainable=True)
-    b_3 = tf.get_variable('b3',[50], trainable=True)
+    with tf.variable_scope('hidden3'):
+      h3 = FullConnected(h2_out, [50, 50]).output()
+      b3_br = BNormal(h3, [50], train_phase).output()
+      h3_relu = tf.nn.relu(h3)
+      h3_out = tf.nn.dropout(h3_relu, KEEP_RATE)
 
-    w_out = tf.get_variable('wout',[50, 2], trainable=True)
-    b_out = tf.get_variable('bout',[2], trainable=True)
-
-    h_1 = tf.add(tf.matmul(data_batch, w_1), b_1)
-    h_1 = tf.nn.relu(h_1)
-    h_1 = tf.nn.dropout(h_1, KEEP_RATE)
-
-    h_2 = tf.add(tf.matmul(h_1, w_2), b_2)
-    h_2 = tf.nn.relu(h_2)
-    h_2 = tf.nn.dropout(h_2, KEEP_RATE)
-
-    h_3 = tf.add(tf.matmul(h_2, w_3), b_3)
-    h_3 = tf.nn.relu(h_3)
-    h_3 = tf.nn.dropout(h_3, KEEP_RATE)
-
-    out = tf.add(tf.matmul(h_3, w_out), b_out)
+    with tf.variable_scope('output'):
+      out = FullConnected(h3_out, [50, 2]).output()
 
     ### define cost function and optimizer
   with tf.device('/cpu:0'):
@@ -74,8 +124,9 @@ def main(_):
 
   ### train model
   for step in range(MAX_STEPS):
-    _, loss, data_p, acc_p, lr_p = sess.run([opt, loss_op, data_batch, accuracy])
+    _, loss, data_p = sess.run([opt, loss_op, data_batch], {train_phase:True})
     if (step+1) % 1000 == 0:
+      acc_p = accuracy.eval({train_phase:False}, session=sess)
       print("[{:5d}/{:5d}] loss:{:.3f}, train accuracy:{:.3f}".format(step+1, MAX_STEPS, loss, acc_p))
   print("--- Training Finished ---")
 
